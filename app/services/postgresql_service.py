@@ -312,24 +312,24 @@ class PostgreSQLService:
             ])
         self.logger.info(f"{len(prompts)} image generation tasks scheduled for work_id {work_id}.")
 
-    async def is_image_job_running(self, job_id: str) -> bool:
+    async def try_register_image_job(self, job_id: str) -> bool:
         """
-        ai_image_job_tracking 테이블에 job_id가 이미 존재하면 True 반환
+        ai_image_job_tracking 테이블에 job_id 등록을 시도합니다.
+        조회와 삽입을 하나의 INSERT 문으로 처리하므로, 같은 job_id가 동시에 들어와도
+        하나만 True를 반환합니다. (이미 등록된 job_id면 False)
         """
-        query = "SELECT 1 FROM ai_image_job_tracking WHERE job_id = $1 LIMIT 1"
-        result = await self.fetch_one(query, job_id)
-        return result is not None
+        query = """
+        INSERT INTO ai_image_job_tracking (job_id) VALUES ($1)
+        ON CONFLICT (job_id) DO NOTHING
+        RETURNING job_id
+        """
+        async with self.pool.acquire() as conn:
+            registered = await conn.fetchval(query, job_id)
+        return registered is not None
 
     async def delete_image_job_by_id(self, job_id: str) -> None:
         """
         ai_image_job_tracking 테이블에서 job_id로 row를 삭제
         """
         query = "DELETE FROM ai_image_job_tracking WHERE job_id = $1"
-        await self.execute(query, job_id)
-
-    async def insert_image_job_tracking(self, job_id: str) -> None:
-        """
-        ai_image_job_tracking 테이블에 job_id를 기록(삽입)
-        """
-        query = "INSERT INTO ai_image_job_tracking (job_id) VALUES ($1) ON CONFLICT (job_id) DO NOTHING"
         await self.execute(query, job_id)
