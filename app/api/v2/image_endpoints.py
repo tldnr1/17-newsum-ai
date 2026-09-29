@@ -60,16 +60,7 @@ async def batch_generate_images(
     """
     logger.info(f"배치 이미지 생성 요청 수신: {payload.id}")
 
-    # 1. job_id 중복 확인
-    is_running = await pg_service.is_image_job_running(payload.id)
-    if is_running:
-        logger.warning(f"중복된 job_id: {payload.id}")
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail={"status": "duplicate", "message": f"Job {payload.id} is already running."},
-        )
-
-    # 2. 기존 health check
+    # 1. health check
     is_healthy = await image_service.check_health()
     if not is_healthy:
         logger.warning("이미지 생성 요청 시 이미지 서버가 준비되지 않음.")
@@ -78,8 +69,14 @@ async def batch_generate_images(
             detail={"status": "unhealthy", "message": "Image generation service is not available."},
         )
 
-    # job_id를 ai_image_job_tracking 테이블에 기록
-    await pg_service.insert_image_job_tracking(payload.id)
+    # 2. job_id 등록 (중복 확인과 기록을 한 번에 처리)
+    is_registered = await pg_service.try_register_image_job(payload.id)
+    if not is_registered:
+        logger.warning(f"중복된 job_id: {payload.id}")
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={"status": "duplicate", "message": f"Job {payload.id} is already running."},
+        )
 
     background_tasks.add_task(
         generate_images_in_background,
